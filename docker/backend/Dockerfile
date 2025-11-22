@@ -7,16 +7,14 @@ COPY jshERP-boot/docs jshERP-boot/docs
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -f jshERP-boot/pom.xml -DskipTests=true clean package
 
-FROM eclipse-temurin:8-jre
+FROM eclipse-temurin:8-jre-alpine
 ENV SPRING_PROFILES_ACTIVE=prod \
     JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom"
 WORKDIR /opt/app
 COPY --from=build /workspace/jshERP-boot/target/jshERP.jar app.jar
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system jsherp \
-    && useradd --system --gid jsherp --home-dir /opt/app jsherp \
+RUN apk add --no-cache curl \
+    && addgroup -S jsherp \
+    && adduser -S -G jsherp -h /opt/app jsherp \
     && mkdir -p /opt/jshERP/upload /opt/tmp/tomcat plugins pluginConfig \
     && chown -R jsherp:jsherp /opt/app /opt/jshERP /opt/tmp
 USER jsherp
