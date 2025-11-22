@@ -1,0 +1,112 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0.24
+    container_name: jsherp-mysql
+    command: [
+      "mysqld",
+      "--character-set-server=utf8mb4",
+      "--collation-server=utf8mb4_general_ci",
+      "--max-connections=512",
+      "--default-authentication-plugin=mysql_native_password"
+    ]
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-jsh_erp}
+      MYSQL_USER: ${MYSQL_USER:-jsh_erp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jshERP@db}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-jshERP@root}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./jshERP-boot/docs/jsh_erp.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    networks:
+      - jsherp
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: jsherp-redis
+    command: >-
+      sh -c 'exec redis-server --save 60 1000 --loglevel warning --requirepass "$${REDIS_PASSWORD}"'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-jshERP@redis}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    networks:
+      - jsherp
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    image: jsherp-backend:latest
+    container_name: jsherp-backend
+    environment:
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-jsh_erp}?useUnicode=true&characterEncoding=utf8&useCursorFetch=true&defaultFetchSize=500&allowMultiQueries=true&rewriteBatchedStatements=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-jsh_erp}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-jshERP@db}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-jshERP@redis}
+      SERVER_PORT: 9999
+      SERVER_SERVLET_CONTEXT_PATH: /jshERP-boot
+      FILE_PATH: /opt/jshERP/upload
+    volumes:
+      - backend_upload:/opt/jshERP/upload
+      - backend_tmp:/opt/tmp/tomcat
+      - backend_plugins:/opt/app/plugins
+      - backend_plugin_config:/opt/app/pluginConfig
+    ports:
+      - "9999:9999"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/jshERP-boot/doc.html > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - jsherp
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    image: jsherp-frontend:latest
+    container_name: jsherp-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    networks:
+      - jsherp
+
+volumes:
+  mysql_data:
+  redis_data:
+  backend_upload:
+  backend_tmp:
+  backend_plugins:
+  backend_plugin_config:
+
+networks:
+  jsherp:
+    driver: bridge
